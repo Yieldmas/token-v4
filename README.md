@@ -1,6 +1,4 @@
-# Yieldmas – Rehypothecation-backed LP Yield Memecoin (Draft Spec)
-
-> Converted from your Excalidraw sketch into a structured Markdown spec with **Mermaid diagrams**.
+# Yieldmas – Rehypo LP Memecoin (Draft Spec)
 
 ---
 
@@ -11,13 +9,13 @@ The protocol rehypothecates USDC into a yield vault (e.g., **Spark / Sky**) and 
 
 ---
 
-## User Journey (as written in the diagram)
+## User Journey
 
 1. Buy token using USDC  
-2. USDC is counted as “common wealth” in Pool (it is deposited into yield bearing vault)  
+2. USDC is counted as "common wealth" in Pool (it is deposited into yield bearing vault)  
 3. Add liquidity (token + USDC) to activate participation in common wealth  
 4. USDC is deposited again into yield bearing vault  
-5. Token is locked for some time in contract (longer time → bigger reward?)  
+5. Token is locked for some time in contract
 6. When you sell USDC it is added to vault each time  
 7. When you sell token then USDC is taken out from vault for liquidity  
 8. Vault fees are tracked & automatically collected when you want to remove liquidity  
@@ -43,10 +41,10 @@ flowchart LR
 
 ## “Common Wealth” / Accounting Intuition
 
-From the sketch, the protocol tracks **two** categories of value:
+The protocol tracks **two** categories of value:
 
-- **On-hand pool balances**: what the PoolManager/pool holds *right now*
-- **Deferred / vault-backed balances**: credits backed by assets sitting in the vault
+- **On-hand pool balances**: what the user wallet holds *right now*
+- **Deferred / vault-backed balances**: funds in the "common wealth" (pool & vaults)
 
 A practical phrasing:
 
@@ -57,7 +55,7 @@ A practical phrasing:
 
 ---
 
-## Example Math (from your “Math” box, kept illustrative)
+## Example Math
 
 **Scenario**
 1. 100 USDC → swap → 100 V4 tokens  
@@ -69,8 +67,7 @@ A practical phrasing:
    - 5% APY on 100 USDC (initial swap leg)
    - 5% APY on 101 USDC (liquidity leg)
    - 5% APY on V4 tokens (inflation)
-7. Protocol generates +10% APY (+ fees)  
-8. User profit ~15% APY (− fees)
+7. Protocol effectively generates ~7.5% APY from whole user capital
 
 After ~1 year (illustration from your note):
 - user portfolio: **111.15 USDC + 105 V4 tokens**
@@ -80,8 +77,6 @@ After ~1 year (illustration from your note):
 ---
 
 ## Implementation Sketch (Facet / Hook Awareness)
-
-Your later section shows:
 
 1) **Initial deployment**: “V4 token facet” + base asset functionality  
 2) **Pool creation with hook**  
@@ -106,21 +101,3 @@ flowchart TB
   P -->|stake USDC| V
   V -->|withdraw USDC to settle exits| P
 ```
-
----
-
-## Open Questions (worth nailing early)
-
-- **Locking target**: do you lock *LP position*, or *token-only* balance?  
-- **When does USDC become “common wealth”**: on swap, on add-liquidity, or both?  
-- **Avoiding double-counting**: how do you prevent creating claims that exceed vault-backed assets?  
-- **Custom AMM vs Uniswap v4**: if you’re on v4, keep pricing inside PoolManager rules and put accounting/sweeps in hooks—unless you truly want a separate pricing mechanism.
-
----
-
-## Excalidraw Source
-
-I saved the original clipboard payload here so you can re-import it:
-
-- `yieldmas_excalidraw_clipboard.json`
-
