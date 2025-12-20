@@ -1,5 +1,5 @@
 from decimal import Decimal as D
-from typing import Dict
+from typing import Dict, Optional
 
 # const
 K = D(1_000)
@@ -9,13 +9,15 @@ B = D(1_000_000_000)
 # cap
 CAP = 1 * B
 
-class LP:
+class User:
+    name: str
     balance_usd: D = D(0)
-    balance_token = CAP
-    price: D = D(1)
-    # TODO: track users liquidity
+    balance_token: D = D(0)
 
-lp = LP()
+    def __init__(self, name: str, usd: D, token: D = D(0)):
+        self.name = name
+        self.balance_usd = usd
+        self.balance_token = token
 
 class CompoundingSnapshot:
     value: D
@@ -29,26 +31,48 @@ class Vault:
     apy: D = D(5) / D(100)
     balance_usd: D = D(0)
     compounding_index: D = D(1.0)
-    user_compounding_snapshots: Dict[str, CompoundingSnapshot] = {}
+    lp_compounding_snapshot: Optional[CompoundingSnapshot] = None
     compounds: int = 0
 
-    # local compounding performed on user interaction
-    # TODO: convert to single snapshot per LP
-    def add(self, user_name: str, value: D):
-        user_snapshot = self.user_compounding_snapshots.get(user_name, None)
-        if user_snapshot is None:
-            self.user_compounding_snapshots[user_name] = CompoundingSnapshot(
-                value, self.compounding_index
-            )
-            self.balance_usd += value
+    def balance_of(self) -> D:
+        if self.lp_compounding_snapshot is None:
+            return self.balance_usd
         else:
-            raise NotImplementedError("Handle case with local compound of user snapshot")
-        
-    # local compounding performed on user interaction
-    def remove(self, user_name: str, value: D):
-        pass
+            return self.lp_compounding_snapshot.value * (
+                self.compounding_index / self.lp_compounding_snapshot.snapshot_of_compounding_index
+            )
 
-    # global compounding performed daily
+    def add(self, value: D):
+        if self.lp_compounding_snapshot is None:
+            # store value as snapshot
+            self.lp_compounding_snapshot = CompoundingSnapshot(
+                value,
+                self.compounding_index
+            )
+        else:
+            # we assume that compound has been already run
+            # store deposit + last deposit with rewards as snapshot
+            self.lp_compounding_snapshot = CompoundingSnapshot(
+                value + self.balance_of(),
+                self.compounding_index
+            )
+
+        # set balance in usd as deposit + last deposit with rewards
+        self.balance_usd = self.balance_of()
+
+    def remove(self, value: D):
+        if self.lp_compounding_snapshot is None:
+            raise Exception("Nothing staked!")
+        else:
+            # store last deposit with rewards - withdrawal as snapshot
+            self.lp_compounding_snapshot = CompoundingSnapshot(
+                self.balance_of() - value,
+                self.compounding_index
+            )
+        
+        # set balance in usd as last deposit with rewards - withdrawal
+        self.balance_usd = self.balance_of()
+
     def compound(self, days: int):
         # run compounding daily
         for _ in range(0, days):
@@ -57,66 +81,179 @@ class Vault:
         # track compounds number
         self.compounds += days
 
+        # increase usd value
+
 vault = Vault()
 
-class User:
-    name: str
-    balance_usd: D = D(0)
-    balance_token: D = D(0)
+class UserSnapshot:
+    compounds: int
+    snapshot_of_compounding_index: D
 
-    def __init__(self, name: str, usd: D, token: D = D(0)):
-        self.name = name
-        self.balance_usd = usd
-        self.balance_token = token
+    def __init__(self, compounds: int, snapshot: D):
+        self.compounds = compounds
+        self.snapshot_of_compounding_index = snapshot
+
+class LP:
+    balance_usd: D = D(0)
+    balance_token = D(0)
+    price: D = D(1)
+    minted: D = D(0)
+    liquidity: Dict[str, D] = {}
+    total_liquidity: D = D(0)
+    user_snapshot: Dict[str, UserSnapshot] = {}
+
+    # use token to perform mint (in case of buy or inflation)
+    def mint(self, amount: D):
+        if self.minted + amount > CAP:
+            raise Exception("Cannot mint over cap")
+        self.balance_token += amount
+        self.minted += amount
+
+    def add_liquidity(self, user: User, token_amount: D, usd_amount: D):
+        # take tokens from user
+        user.balance_token -= token_amount
+        user.balance_usd -= usd_amount
+
+        # push tokens to pool
+        self.balance_token += token_amount
+        self.balance_usd += usd_amount
+
+        # put usdc on vault for yield generation
+        self.rehypo(user)
+
+        # store compound day on user
+        self.user_snapshot[user.name] = UserSnapshot(
+            vault.compounds,
+            vault.compounding_index
+        )
+
+        # compute liquidity
+        user_liquidity = self.liquidity.get(user.name)
+        if user_liquidity is None:
+            self.liquidity[user.name] = token_amount + usd_amount
+        else:
+            self.liquidity[user.name] += token_amount + usd_amount
+        self.total_liquidity += token_amount + usd_amount
+
+    def remove_liquidity(self, user: User, liquidity_amount: D):
+        # translate liquidity to token & usdc
+        compound_delta = vault.compounding_index / self.user_snapshot[user.name].snapshot_of_compounding_index
+        
+        usd_deposit = liquidity_amount / 2
+        usd_yield = usd_deposit * (compound_delta - D(1)) * 2
+        usd_amount = usd_deposit + usd_yield
+
+        token_deposit = liquidity_amount / 2
+        token_yield = token_deposit * (compound_delta - D(1))
+        token_amount = token_deposit + token_yield
+
+        # mint inflation yield on tokens
+        self.mint(token_yield)
+
+        # remove user usdc deposit & rewards from vault
+        self.dehypo(user, usd_amount)
+
+        # remove funds from lp
+        self.balance_token -= token_amount
+        self.balance_usd -= usd_amount
+
+        # send funds to user
+        user.balance_token += token_amount
+        user.balance_usd += usd_amount
+
+        # update liquidity
+        self.liquidity[user.name] -= liquidity_amount
+        self.total_liquidity -= liquidity_amount
+
+    def buy(self, user: User, amount: D):
+        # take usd
+        user.balance_usd -= amount
+        self.balance_usd += amount
+
+        # compute out amount (token)
+        # 1_000 USD / 1 USD price -> 1_000 tokens
+        # 2_000 USD / 1 USD price -> 2_000 tokens
+        # 1_500 USD / 1.5 USD price -> 1_000 tokens
+        out_amount = amount / self.price
+
+        # mint as much token as needed
+        self.mint(out_amount - self.balance_token)
+        
+        # give token
+        self.balance_token -= out_amount
+        user.balance_token += out_amount
+
+        # bump price
+        # in pool: 0 USD ; amount: 10_000 USD -> 0.1 UP (higher amount > pool)
+        # in pool: 100 USD ; amount: 100 USD -> 0.01 UP (equal amount to pool)
+        # in pool: 1000 USD ; amount: 100 USD -> 0.001 UP (smaller amount < pool)
+        # TODO: convert to price discovery (bonding curve)
+        self.price += D(0.1)
+
+        # rehypo
+        self.rehypo(user)
+
+    def rehypo(self, user: User):
+        # add funds to vault
+        vault.add(self.balance_usd)
+
+        # remove funds from lp
+        self.balance_usd = D(0)
+
+        # save user information
+
+    def sell(self, user: User, amount: D):
+        # take token
+        user.balance_token -= amount
+        self.balance_token += amount
+
+        # compute amount in (usd)
+        in_amount = amount * self.price
+
+        # dehypo
+        self.dehypo(user, in_amount)
+
+        self.balance_usd -= in_amount
+        user.balance_usd += in_amount
+
+        # deflate price
+        # TODO: convert to price discovery (bonding curve)
+        self.price -= D(0.1)
+
+    def dehypo(self, user: User, amount: D):
+        # remove from vault
+        vault.remove(amount)
+
+        # add to lp
+        self.balance_usd += D(amount)
+
+        # update user information
+
+lp = LP()
 
 user_a = User("aaron", 1 * K)
 
-def buy(user: User, amount: D):
-    # take usd
-    user.balance_usd -= amount
-    lp.balance_usd += amount
+# buy tokens for 500 usd
+lp.buy(user_a, D(500))
+assert lp.balance_usd == D(0)
+assert vault.balance_usd == D(500) 
+assert vault.balance_of() == D(500)
 
-    # compute out amount (token)
-    # 1_000 USD / 1 USD price -> 1_000 tokens
-    # 2_000 USD / 1 USD price -> 2_000 tokens
-    # 1_500 USD / 1.5 USD price -> 1_000 tokens
-    out_amount = amount / lp.price
+lp.add_liquidity(user_a, D(500), D(500))
+assert lp.balance_token == D(500)
+assert lp.balance_usd == D(0)
+assert vault.balance_usd == D(1_000)
+assert vault.balance_of() == D(1_000)
 
-    # give token
-    lp.balance_token -= out_amount
-    user.balance_token += out_amount
+# compound for 100 days
+vault.compound(100)
+print(f"[100 days] Vault balance: {vault.balance_of()}")
 
-    # bump price
-    # in pool: 0 USD ; amount: 10_000 USD -> 0.1 UP (higher amount > pool)
-    # in pool: 100 USD ; amount: 100 USD -> 0.01 UP (equal amount to pool)
-    # in pool: 1000 USD ; amount: 100 USD -> 0.001 UP (smaller amount < pool)
-    # TODO: convert to price discovery (bonding curve)
-    lp.price += D(0.1)
-
-    # rehypo
-    rehypo(user)
-
-def rehypo(user: User):
-    vault.add(user.name, lp.balance_usd)
-    lp.balance_usd = D(0)
-
-def sell(user: User, amount: D):
-    # take token
-    user.balance_token -= amount
-    lp.balance_token += amount
-
-    # compute amount in (usd)
-    in_amount = amount * lp.price
-
-    # dehypo
-    dehypo(user, in_amount)
-
-    lp.balance_usd -= in_amount
-    user.balance_usd += in_amount
-
-    # deflate price
-    # TODO: convert to price discovery (bonding curve)
-    lp.price -= D(0.1)
-
-def dehypo(user: User, amount: D):
-    pass
+# remove liquidity
+lp.remove_liquidity(user_a, lp.liquidity[user_a.name])
+print(f"[Liquidity removal] User USDC: {user_a.balance_usd}")
+print(f"[Liquidity removal] User tokens: {user_a.balance_token}")
+print(f"[Liquidity removal] LP tokens: {lp.balance_token}")
+print(f"[Liquidity removal] LP USDC: {lp.balance_usd}")
+print(f"[Liquidity removal] Vault balance of: {vault.balance_of()}")
+print(f"[Liquidity removal] Vault USDC: {vault.balance_usd}")
