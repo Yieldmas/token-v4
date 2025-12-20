@@ -11,10 +11,10 @@ CAP = 1 * B
 
 class User:
     name: str
-    balance_usd: D = D(0)
-    balance_token: D = D(0)
+    balance_usd: D
+    balance_token: D
 
-    def __init__(self, name: str, usd: D, token: D = D(0)):
+    def __init__(self, name: str, usd: D = D(0), token: D = D(0)):
         self.name = name
         self.balance_usd = usd
         self.balance_token = token
@@ -28,11 +28,18 @@ class CompoundingSnapshot:
         self.snapshot_of_compounding_index = snapshot
 
 class Vault:
-    apy: D = D(5) / D(100)
-    balance_usd: D = D(0)
-    compounding_index: D = D(1.0)
-    lp_compounding_snapshot: Optional[CompoundingSnapshot] = None
-    compounds: int = 0
+    apy: D
+    balance_usd: D
+    compounding_index: D
+    lp_compounding_snapshot: Optional[CompoundingSnapshot]
+    compounds: int
+
+    def __init__(self, ):
+        self.apy = D(5) / D(100)
+        self.balance_usd = D(0)
+        self.compounding_index = D(1.0)
+        self.lp_compounding_snapshot = None
+        self.compounds = 0
 
     def balance_of(self) -> D:
         if self.lp_compounding_snapshot is None:
@@ -81,10 +88,6 @@ class Vault:
         # track compounds number
         self.compounds += days
 
-        # increase usd value
-
-vault = Vault()
-
 class UserSnapshot:
     compounds: int
     snapshot_of_compounding_index: D
@@ -94,13 +97,24 @@ class UserSnapshot:
         self.snapshot_of_compounding_index = snapshot
 
 class LP:
-    balance_usd: D = D(0)
-    balance_token = D(0)
-    price: D = D(1)
-    minted: D = D(0)
-    liquidity: Dict[str, D] = {}
-    total_liquidity: D = D(0)
-    user_snapshot: Dict[str, UserSnapshot] = {}
+    balance_usd: D
+    balance_token: D
+    price: D
+    minted: D
+    liquidity: Dict[str, D]
+    total_liquidity: D
+    user_snapshot: Dict[str, UserSnapshot]
+    vault: Vault
+
+    def __init__(self, vault: Vault):
+        self.balance_usd = D(0)
+        self.balance_token = D(0)
+        self.price = D(1)
+        self.minted = D(0)
+        self.liquidity = {}
+        self.total_liquidity = D(0)
+        self.user_snapshot = {}
+        self.vault = vault
 
     # use token to perform mint (in case of buy or inflation)
     def mint(self, amount: D):
@@ -123,8 +137,8 @@ class LP:
 
         # store compound day on user
         self.user_snapshot[user.name] = UserSnapshot(
-            vault.compounds,
-            vault.compounding_index
+            self.vault.compounds,
+            self.vault.compounding_index
         )
 
         # compute liquidity
@@ -137,7 +151,7 @@ class LP:
 
     def remove_liquidity(self, user: User, liquidity_amount: D):
         # translate liquidity to token & usdc
-        compound_delta = vault.compounding_index / self.user_snapshot[user.name].snapshot_of_compounding_index
+        compound_delta = self.vault.compounding_index / self.user_snapshot[user.name].snapshot_of_compounding_index
         
         usd_deposit = liquidity_amount / 2
         usd_yield = usd_deposit * (compound_delta - D(1)) * 2
@@ -195,7 +209,7 @@ class LP:
 
     def rehypo(self, user: User):
         # add funds to vault
-        vault.add(self.balance_usd)
+        self.vault.add(self.balance_usd)
 
         # remove funds from lp
         self.balance_usd = D(0)
@@ -222,38 +236,53 @@ class LP:
 
     def dehypo(self, user: User, amount: D):
         # remove from vault
-        vault.remove(amount)
+        self.vault.remove(amount)
 
         # add to lp
         self.balance_usd += D(amount)
 
         # update user information
 
-lp = LP()
+def single_user_scenario(
+    user_initial_usd: D = 1 * K,
+    user_buy_token_usd: D = D(500),
+    user_add_liquidity_token: D = D(500),
+    user_add_liquidity_usd: D = D(500),
+    compound_days: int = 100,
+):
+    vault = Vault()
+    lp = LP(vault)
+    user = User("aaron", user_initial_usd)
+    print(f"[Initial] User USDC: {user.balance_usd}")
 
-user_a = User("aaron", 1 * K)
+    # buy tokens for 500 usd
+    lp.buy(user, user_buy_token_usd)
+    assert lp.balance_usd == D(0)
+    assert vault.balance_usd == user_buy_token_usd
+    assert vault.balance_of() == user_buy_token_usd
+    print(f"[Buy] User USDC: {user_buy_token_usd}")
+    print(f"[Buy] User tokens: {user.balance_token}")
 
-# buy tokens for 500 usd
-lp.buy(user_a, D(500))
-assert lp.balance_usd == D(0)
-assert vault.balance_usd == D(500) 
-assert vault.balance_of() == D(500)
+    lp.add_liquidity(user, user_add_liquidity_token, user_add_liquidity_usd)
+    assert lp.balance_token == user_add_liquidity_token
+    assert lp.balance_usd == D(0)
+    assert vault.balance_usd == user_add_liquidity_usd + user_buy_token_usd
+    assert vault.balance_of() == user_add_liquidity_usd + user_buy_token_usd
+    print(f"[Liquidity add] User USDC: {user_add_liquidity_usd}")
+    print(f"[Liquidity add] User tokens: {user_add_liquidity_token}")
+    print(f"[Liquidity add] User liquidity: {lp.liquidity[user.name]}")
 
-lp.add_liquidity(user_a, D(500), D(500))
-assert lp.balance_token == D(500)
-assert lp.balance_usd == D(0)
-assert vault.balance_usd == D(1_000)
-assert vault.balance_of() == D(1_000)
+    # compound for 100 days
+    vault.compound(compound_days)
+    print(f"[{compound_days} days] Vault balance: {vault.balance_of()}")
 
-# compound for 100 days
-vault.compound(100)
-print(f"[100 days] Vault balance: {vault.balance_of()}")
+    # remove liquidity
+    lp.remove_liquidity(user, lp.liquidity[user.name])
+    print(f"[Liquidity removal] User USDC: {user.balance_usd}")
+    print(f"[Liquidity removal] User tokens: {user.balance_token}")
+    print(f"[Liquidity removal] LP tokens: {lp.balance_token}")
+    print(f"[Liquidity removal] LP USDC: {lp.balance_usd}")
+    print(f"[Liquidity removal] Vault balance of: {vault.balance_of()}")
+    print(f"[Liquidity removal] Vault USDC: {vault.balance_usd}")
 
-# remove liquidity
-lp.remove_liquidity(user_a, lp.liquidity[user_a.name])
-print(f"[Liquidity removal] User USDC: {user_a.balance_usd}")
-print(f"[Liquidity removal] User tokens: {user_a.balance_token}")
-print(f"[Liquidity removal] LP tokens: {lp.balance_token}")
-print(f"[Liquidity removal] LP USDC: {lp.balance_usd}")
-print(f"[Liquidity removal] Vault balance of: {vault.balance_of()}")
-print(f"[Liquidity removal] Vault USDC: {vault.balance_usd}")
+single_user_scenario()
