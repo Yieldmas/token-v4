@@ -3,7 +3,6 @@ from typing import Dict, Optional
 
 # const
 K = D(1_000)
-M = D(1_000_000)
 B = D(1_000_000_000)
 
 # price movement amplification
@@ -24,87 +23,66 @@ class User:
 
 class CompoundingSnapshot:
     value: D
-    snapshot_of_compounding_index: D
+    index: D
 
-    def __init__(self, value: D, snapshot: D):
+    def __init__(self, value: D, index: D):
         self.value = value
-        self.snapshot_of_compounding_index = snapshot
+        self.index = index
 
 class Vault:
     apy: D
     balance_usd: D
     compounding_index: D
-    lp_compounding_snapshot: Optional[CompoundingSnapshot]
+    snapshot: Optional[CompoundingSnapshot]
     compounds: int
 
-    def __init__(self, ):
+    def __init__(self):
         self.apy = D(5) / D(100)
         self.balance_usd = D(0)
         self.compounding_index = D(1.0)
-        self.lp_compounding_snapshot = None
+        self.snapshot = None
         self.compounds = 0
 
     def balance_of(self) -> D:
-        if self.lp_compounding_snapshot is None:
+        if self.snapshot is None:
             return self.balance_usd
-        else:
-            return self.lp_compounding_snapshot.value * (
-                self.compounding_index / self.lp_compounding_snapshot.snapshot_of_compounding_index
-            )
+        return self.snapshot.value * (self.compounding_index / self.snapshot.index)
 
     def add(self, value: D):
-        if self.lp_compounding_snapshot is None:
-            # store value as snapshot
-            self.lp_compounding_snapshot = CompoundingSnapshot(
-                value,
-                self.compounding_index
-            )
-        else:
-            # we assume that compound has been already run
-            # store deposit + last deposit with rewards as snapshot
-            self.lp_compounding_snapshot = CompoundingSnapshot(
-                value + self.balance_of(),
-                self.compounding_index
-            )
-
-        # set balance in usd as deposit + last deposit with rewards
+        self.snapshot = CompoundingSnapshot(
+            value + self.balance_of(),
+            self.compounding_index
+        )
         self.balance_usd = self.balance_of()
 
     def remove(self, value: D):
-        if self.lp_compounding_snapshot is None:
+        if self.snapshot is None:
             raise Exception("Nothing staked!")
-        else:
-            # store last deposit with rewards - withdrawal as snapshot
-            self.lp_compounding_snapshot = CompoundingSnapshot(
-                self.balance_of() - value,
-                self.compounding_index
-            )
-        
-        # set balance in usd as last deposit with rewards - withdrawal
+        self.snapshot = CompoundingSnapshot(
+            self.balance_of() - value,
+            self.compounding_index
+        )
         self.balance_usd = self.balance_of()
 
     def compound(self, days: int):
         # run compounding daily
-        for _ in range(0, days):
+        for _ in range(days):
             self.compounding_index *= D(1) + (self.apy / D(365))
-        
+
         # track compounds number
         self.compounds += days
 
 class UserSnapshot:
-    compounds: int
-    snapshot_of_compounding_index: D
+    index: D
 
-    def __init__(self, compounds: int, snapshot: D):
-        self.compounds = compounds
-        self.snapshot_of_compounding_index = snapshot
+    def __init__(self, index: D):
+        self.index = index
 
 class LP:
     balance_usd: D
     balance_token: D
     minted: D
     liquidity: Dict[str, D]
-    total_liquidity: D
     user_snapshot: Dict[str, UserSnapshot]
     vault: Vault
     k: Optional[D]
@@ -117,7 +95,6 @@ class LP:
         self.balance_token = D(0)
         self.minted = D(0)
         self.liquidity = {}
-        self.total_liquidity = D(0)
         self.user_snapshot = {}
         self.vault = vault
         self.k = None
@@ -155,9 +132,18 @@ class LP:
         Reaches 0 at 1M tokens minted.
         """
         # Amplify minting effect by 1000x to hit 0 at 1M tokens
-        effective_minted = min(self.minted * D(1000), CAP)
-        exposure = EXPOSURE_FACTOR * (D(1) - effective_minted / CAP)
+        effective = min(self.minted * D(1000), CAP)
+        exposure = EXPOSURE_FACTOR * (D(1) - effective / CAP)
         return max(D(0), exposure)
+
+    def _get_token_reserve(self) -> D:
+        """Virtual token reserve = (CAP - minted) / exposure"""
+        exposure = self.get_exposure()
+        return (CAP - self.minted) / exposure if exposure > 0 else CAP - self.minted
+
+    def _get_usdc_reserve(self) -> D:
+        """Virtual USDC reserve = buy_usdc + virtual_liquidity"""
+        return self.buy_usdc + self.virtual_liquidity
 
     def _update_k(self):
         """
@@ -165,10 +151,7 @@ class LP:
         k = (token_reserve) * (buy_usdc + virtual_liquidity)
         Only buy_usdc affects bonding curve, not lp_usdc.
         """
-        exposure = self.get_exposure()
-        token_reserve = (CAP - self.minted) / exposure if exposure > 0 else CAP - self.minted
-        usdc_reserve = self.buy_usdc + self.virtual_liquidity
-        self.k = token_reserve * usdc_reserve
+        self.k = self._get_token_reserve() * self._get_usdc_reserve()
 
     def _get_out_amount(self, sold_amount: D, selling_token: bool) -> D:
         """
@@ -177,14 +160,12 @@ class LP:
         Uses dynamic exposure that decreases as more tokens are minted.
         Only buy_usdc affects bonding curve.
         """
-        exposure = self.get_exposure()
-
         if self.k is None:
             # First buy: initialize k with virtual liquidity
-            self.k = ((CAP - self.minted) / exposure if exposure > 0 else CAP - self.minted) * self.virtual_liquidity
+            self.k = self._get_token_reserve() * self.virtual_liquidity
 
-        token_reserve = (CAP - self.minted) / exposure if exposure > 0 else CAP - self.minted
-        usdc_reserve = self.buy_usdc + self.virtual_liquidity
+        token_reserve = self._get_token_reserve()
+        usdc_reserve = self._get_usdc_reserve()
 
         if selling_token:
             # Selling tokens, getting USDC (sell operation)
@@ -223,15 +204,14 @@ class LP:
         self.lp_usdc += usd_amount
 
         # put usdc on vault for yield generation
-        self.rehypo(user)
+        self.rehypo()
 
         # initialize or update k on first liquidity add
         if self.k is None:
             self._update_k()
 
-        # store compound day on user
+        # snapshot compounding index
         self.user_snapshot[user.name] = UserSnapshot(
-            self.vault.compounds,
             self.vault.compounding_index
         )
 
@@ -241,25 +221,24 @@ class LP:
             self.liquidity[user.name] = token_amount + usd_amount
         else:
             self.liquidity[user.name] += token_amount + usd_amount
-        self.total_liquidity += token_amount + usd_amount
 
     def remove_liquidity(self, user: User, liquidity_amount: D):
         # translate liquidity to token & usdc
-        compound_delta = self.vault.compounding_index / self.user_snapshot[user.name].snapshot_of_compounding_index
+        delta = self.vault.compounding_index / self.user_snapshot[user.name].index
 
         usd_deposit = liquidity_amount / 2
-        usd_yield = usd_deposit * (compound_delta - D(1)) * 2
+        usd_yield = usd_deposit * (delta - D(1)) * 2
         usd_amount = usd_deposit + usd_yield
 
         token_deposit = liquidity_amount / 2
-        token_yield = token_deposit * (compound_delta - D(1))
+        token_yield = token_deposit * (delta - D(1))
         token_amount = token_deposit + token_yield
 
         # mint inflation yield on tokens
         self.mint(token_yield)
 
         # remove user usdc deposit & rewards from vault
-        self.dehypo(user, usd_amount)
+        self.dehypo(usd_amount)
 
         # reduce lp_usdc by the original LP principal
         self.lp_usdc -= usd_deposit
@@ -274,7 +253,6 @@ class LP:
 
         # update liquidity
         self.liquidity[user.name] -= liquidity_amount
-        self.total_liquidity -= liquidity_amount
 
     def buy(self, user: User, amount: D):
         # take usd
@@ -295,19 +273,17 @@ class LP:
         self.buy_usdc += amount
 
         # rehypo (deposits all USDC to vault)
-        self.rehypo(user)
+        self.rehypo()
 
         # update invariant
         self._update_k()
 
-    def rehypo(self, user: User):
+    def rehypo(self):
         # add funds to vault
         self.vault.add(self.balance_usd)
 
         # remove funds from lp
         self.balance_usd = D(0)
-
-        # save user information
 
     def sell(self, user: User, amount: D):
         # take token
@@ -321,7 +297,7 @@ class LP:
         self.buy_usdc -= in_amount
 
         # dehypo
-        self.dehypo(user, in_amount)
+        self.dehypo(in_amount)
 
         # give usd
         self.balance_usd -= in_amount
@@ -330,14 +306,12 @@ class LP:
         # update invariant after swap
         self._update_k()
 
-    def dehypo(self, user: User, amount: D):
+    def dehypo(self, amount: D):
         # remove from vault
         self.vault.remove(amount)
 
         # add to lp
-        self.balance_usd += D(amount)
-
-        # update user information
+        self.balance_usd += amount
 
 def single_user_scenario(
     user_initial_usd: D = 1 * K,
