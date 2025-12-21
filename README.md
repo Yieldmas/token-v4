@@ -1,126 +1,248 @@
-# Yieldmas – Rehypothecation-backed LP Yield Memecoin (Draft Spec)
+# Yieldmas – Rehypothecation-backed LP Yield Memecoin
 
-> Converted from your Excalidraw sketch into a structured Markdown spec with **Mermaid diagrams**.
+## Dictionary
+
+- **MEME** - a memecoin token used witin platform
+- **MEME/USDC LP** - a liquidity pool for MEME/USDC with `Hook` integration
+- **HOOK** - a Uniswap v4 hook with rehypotication features and bonding curve
+- **yield** - vault yield from rehypoticating liquidity
+- **LP-fees** - liquidity pool trading fees
 
 ---
 
 ## Concept
 
-Users buy the meme token with USDC, then provide liquidity into a **V4 Token : USDC** pool.  
-The protocol rehypothecates USDC into a yield vault (e.g., **Spark / Sky**) and redistributes yield (+ fees) back to liquidity providers (and optionally lockers).
+The project builts appon following paradigm:
+
+"Idle liquidity is an contradiction of DeFi"
+
+We aim to create a token that will rehypocate it's liquidity and allow our community to gain instat exposure to the value behind it. The liquidity pool will rehypocate stablecoins into a yieal bearing protocol and share profits among participants.
 
 ---
 
-## User Journey (as written in the diagram)
-
-1. Buy token using USDC  
-2. USDC is counted as “common wealth” in Pool (it is deposited into yield bearing vault)  
-3. Add liquidity (token + USDC) to activate participation in common wealth  
-4. USDC is deposited again into yield bearing vault  
-5. Token is locked for some time in contract (longer time → bigger reward?)  
-6. When you sell USDC it is added to vault each time  
-7. When you sell token then USDC is taken out from vault for liquidity  
-8. Vault fees are tracked & automatically collected when you want to remove liquidity  
-9. Locked token has inflation APY (example: 1 year deposit → same % as USDT APY)  
-10. Custom AMM → computes amounts based on balances in PoolManager & Vault
-
----
-
-## Core Economic Loop (diagram)
+## High-level overview
 
 ```mermaid
-flowchart LR
-  U[User] -->|swap USDC -> token| T[V4 Token]
-  U -->|deposit token + USDC| P[V4:USDC Pool]
-  P -->|sweep / stake USDC| V[Spark / Sky Vault]
-  V -->|yield accrues| V
-  P <-->|withdraw USDC to settle exits| V
-  P -->|LP fees + vault yield| R[Rewards accounting]
-  R -->|claim / auto-collect on remove liquidity| U
+flowchart
+  U[User]
+  P["USDC/MEME"]
+  H["Hook"]
+  V["Vault"]
+  T["MEME"]
+
+  U -->|Buy MEME| P
+  P --> |callback| H
+  H --> |USDC | V
+  H --> T
+  T --> |mints | U
 ```
 
----
+1. Users buy the MEME with USDC
+2. The LP calls Hook
+3. Hook moves USDC into a vault (e.g., **Spark / Sky**)
+4. Hooks mints MEME to User
 
-## “Common Wealth” / Accounting Intuition
-
-From the sketch, the protocol tracks **two** categories of value:
-
-- **On-hand pool balances**: what the PoolManager/pool holds *right now*
-- **Deferred / vault-backed balances**: credits backed by assets sitting in the vault
-
-A practical phrasing:
-
-- The pool keeps just enough USDC for immediate swap/exit needs
-- Excess USDC is deposited into the vault
-- LPs (and/or lockers) earn a pro-rata share of vault yield + pool fees
-- On exits/sells, the system pulls USDC out of the vault to settle
-
----
-
-## Example Math (from your “Math” box, kept illustrative)
-
-**Scenario**
-1. 100 USDC → swap → 100 V4 tokens  
-2. 100 USDC → stake → vault  
-3. 100 V4 tokens + 101 USDC → add liquidity  
-4. 101 USDC → stake → vault  
-5. 100 V4 tokens → lock → pool  
-6. User receives rewards:
-   - 5% APY on 100 USDC (initial swap leg)
-   - 5% APY on 101 USDC (liquidity leg)
-   - 5% APY on V4 tokens (inflation)
-7. Protocol generates +10% APY (+ fees)  
-8. User profit ~15% APY (− fees)
-
-After ~1 year (illustration from your note):
-- user portfolio: **111.15 USDC + 105 V4 tokens**
-
-> Exact outcomes depend on vault APY, fee model, how you attribute “swap-leg” yield, and how you price exits.
-
----
-
-## Implementation Sketch (Facet / Hook Awareness)
-
-Your later section shows:
-
-1) **Initial deployment**: “V4 token facet” + base asset functionality  
-2) **Pool creation with hook**  
-3) **Attach facet aware of Pool, Hook & Vault**
+### System Diagram
 
 ```mermaid
 flowchart TB
-  subgraph Deploy
-    F[V4 token facet] --> BA[Base asset functionality]
-  end
+    U[User]
+    P["USDC/MEME"]
+    H["Hook"]
+    V["Vault"]
+    T["MEME"]
 
-  subgraph Pool
-    P[V4:USDC Pool] <--> H[Liquidity control hook]
-  end
+    U -- Buy MEME --> P
+    U -- Add liquidity--> P
+    U -- Sell MEME --> P
+    U -- Remove liquidity --> P
+    P <-- Hook callbacks --> H
+    H -- Price quote  --> P
+    P -- Forward USDC inflows --> H
+    H -- Deposit --> V
+    V -- Yield accrues --> V
+    H -- Withdraw --> V
+    H -- Mint --> T
+```
 
-  subgraph Yield
-    V[Spark / Sky Vault]
-  end
+## User Flows
 
-  F -->|swap tracking / deferred balances| P
-  F -->|vault integration / rehypothecation| V
-  P -->|stake USDC| V
-  V -->|withdraw USDC to settle exits| P
+1. Buy token using USDC
+2. Hook processes USDC and deposits into yield bearing vault
+3. Add liquidity (token + USDC)
+4. USDC is deposited again into yield bearing vault
+5. LP is locked for some time using Hook logic (longer time → bigger reward?)
+6. When you sell USDC it is withdrawn from Vault to vault each time
+7. Vault fees are tracked & automatically collected when you want to remove liquidity
+8. Locked token has inflation APY (example: 1 year deposit → same % as USDT APY)
+9. Custom AMM → computes amounts based on balances in PoolManager & Vault
+
+---
+
+## Core Economic Loop
+
+```mermaid
+flowchart TB
+  U[User]
+  P["V4 Pool USDC MEME"]
+  H["Hook curve and rehypo"]
+  V["Vault USDC yield"]
+  R["Rewards engine snapshot delta"]
+  T["MEME token mint rewards"]
+
+  %% Buys and LP add route USDC to vault
+  U -->|buy MEME or add LP| P
+  P -->|USDC leg| H
+  H -->|deposit USDC| V
+  V -->|yield accrues| V
+
+  %% Pricing is only bonding curve
+  H -->|quote price from curve| P
+
+  %% Rewards from reserve delta
+  V -->|reserve now and reserve snapshot| R
+  R -->|compute mint amount cap| T
+  T -->|mint rewards| U
+
+  %% Exits and sells
+  U -->|sell MEME or remove LP| P
+  H -->|withdraw USDC if available| V
+  H -->|settle USDC out guard| P
 ```
 
 ---
 
-## Open Questions (worth nailing early)
+## Example math (simple bonding curve + LP fees)
 
-- **Locking target**: do you lock *LP position*, or *token-only* balance?  
-- **When does USDC become “common wealth”**: on swap, on add-liquidity, or both?  
-- **Avoiding double-counting**: how do you prevent creating claims that exceed vault-backed assets?  
-- **Custom AMM vs Uniswap v4**: if you’re on v4, keep pricing inside PoolManager rules and put accounting/sweeps in hooks—unless you truly want a separate pricing mechanism.
+### Assumptions
+
+- LP fee rate: `f = 0.3% = 0.003` #TODO figure out if this not overcomplicates
+- Vault APY: `r = 5% = 0.05`
+- User actions:
+  1. Buy MEME with `100 USDC`
+  2. Add liquidity 1:1 by value and deposits an additional USDC
+- Fee is taken first, **net USDC** is rehypothecated into the vault and earns yield.
+- We compute profit in **USDC value**
+
+## 1) How much USDC is working in the vault?
+
+**Leg A (buy):**
+
+- User pays: `100`
+- LP fee: `100 * 0.003 = 0.30`
+- Deposited to vault: `100 - 0.30 = 99.70 USDC`
+
+**Leg B (LP add, USDC side):**
+
+- User deposits: `100`
+- LP fee: `100 * 0.003 = 0.30`
+- Deposited to vault: `100 - 0.30 = 99.70 USDC`
+
+**Total vault principal:**
+
+- `D = 99.70 + 99.70 = 199.40 USDC`
 
 ---
 
-## Excalidraw Source
+## 2) Vault yield after ~1 year at 5% APY
 
-I saved the original clipboard payload here so you can re-import it:
+- `yield_USDC = D * r`
+- `yield_USDC = 199.40 * 0.05 = 9.97 USDC`
 
-- `yieldmas_excalidraw_clipboard.json`
+✅ **Vault yield earned by the user: ~9.97 USDC / year**
 
+---
+
+## 3) LP fee income (separate from vault yield)
+
+Those `0.30 + 0.30 = 0.60 USDC` are **not “lost”**—they are LP revenue distributed by liquidity share and swap volume.
+
+Concise formula:
+
+- `lp_fees_USDC = 0.003 * V_year * share`
+
+where:
+
+- `V_year` = total swap volume through the pool over the year (USDC notional)
+- `share` = user’s average share of liquidity (0..1)
+
+Example:
+
+- `V_year = 10,000 USDC`, `share = 0.2`
+- `lp_fees_USDC = 0.003 * 10,000 * 0.2 = 6.0 USDC`
+
+---
+
+## Result after 1 year (USDC value)
+
+- Vault yield: **~9.97 USDC**
+- LP fees: `0.003 * V_year * share`
+
+**Total profit (USDC value):**
+
+- `profit ≈ 9.97 + 0.003 * V_year * share`
+
+---
+
+## Implementation Sketch
+
+```mermaid
+flowchart TB
+  %% ========= ENTITIES =========
+  U[User]
+
+  %% ========= UNISWAP v4 =========
+  subgraph V4[Uniswap v4]
+    P[USDC / MEME Pool]
+  end
+
+  %% ========= DIAMONDS =========
+  subgraph HD[Hook Diamond]
+    HF[Hook Facets<br/>Pricing + Rehypo + Accounting]
+  end
+
+  subgraph MD[MEME Diamond]
+    MF[Token Facets<br/>ERC-20 + Mint/Burn + Rewards]
+  end
+
+  %% ========= YIELD =========
+  subgraph Y[Yield]
+    V[Yield Vault<br/>Spark/Sky/etc]
+  end
+
+  %% ========= OPTIONAL =========
+  subgraph L[Liquidity Position Tracking]
+    NFT[LP Position NFT<br/>]
+    ACCT[LP Fee + Yield Accounting]
+  end
+
+  %% ========= FLOWS =========
+
+  %% User interactions (only via Pool)
+  U -->|Buy MEME| P
+  U -->|Sell MEME| P
+  U -->|Add liquidity| P
+  U -->|Remove liquidity| P
+
+  %% Hook is the controller for price + settlement
+  P <--> |hook callbacks| HF
+
+  %% Pricing path (bonding curve)
+  HF -->|quote price<br/>bonding curve state| P
+
+  %% Rehypothecation path (USDC custody is in vault)
+  HF -->|deposit net USDC| V
+  V -->|yield accrues| V
+  HF <-->|withdraw USDC for sells/exits| V
+
+  %% Token supply / rewards
+  HF --> |mint reward| MF
+  MF -->|MEME transfers| P
+
+  %% Accounting / NFTs (optional)
+  HF -->|record LP shares / snapshots| ACCT
+  ACCT -->|mint/update position| NFT
+  ACCT -->|fees + yield claim on remove| U
+```
+
+---
