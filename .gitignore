@@ -1,0 +1,5 @@
+.claude/
+.vscode/
+.serena/
+*.pyc
+__pycache__/
