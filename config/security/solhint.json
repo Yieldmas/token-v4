@@ -1,0 +1,7 @@
+{
+    "extends": "solhint:recommended",
+    "rules": {
+        "max-line-length": ["error", 150],
+        "no-global-import": "off"
+    }
+}

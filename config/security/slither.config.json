@@ -1,0 +1,8 @@
+{
+    "detectors_to_exclude": ["naming-convention", "assembly"],
+    "exclude_informational": true,
+    "exclude_low": true,
+    "exclude_medium": false,
+    "exclude_high": false,
+    "filter_paths": "dependencies/"
+}

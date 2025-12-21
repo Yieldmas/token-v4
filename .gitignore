@@ -1,0 +1,8 @@
+.vscode/
+.claude/
+.serena/
+
+# Soldeer
+/dependencies
+cache/
+out/

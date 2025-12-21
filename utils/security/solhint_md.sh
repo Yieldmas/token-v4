@@ -1,0 +1,1 @@
+solhint --config config/security/solhint.json src/**/*.sol -f json > solhint-report.json && python util-scripts/convert_solhint_report.py
