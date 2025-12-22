@@ -443,11 +443,11 @@ class LP:
         # Virtual reserves
         token_reserve = self._get_token_reserve()
         usdc_reserve = self._get_usdc_reserve()
-        print(f"{Color.CYAN}  │ Virtual Reserves: token={Color.YELLOW}{token_reserve:.2f}{Color.END}, usdc={Color.YELLOW}{usdc_reserve:.2f}{Color.END}")
+        print(f"{Color.CYAN}  │ Virtual Reserves: {Color.END}token={Color.YELLOW}{token_reserve:.2f}{Color.END}, usdc={Color.YELLOW}{usdc_reserve:.2f}{Color.END}")
 
         # Bonding curve constant
         k_value = f"{self.k:.2f}" if self.k else "None"
-        print(f"{Color.CYAN}  │ Bonding Curve k = {Color.YELLOW}{k_value}{Color.END}")
+        print(f"{Color.CYAN}  │ Bonding Curve k: {Color.YELLOW}{k_value}{Color.END}")
 
         # Dynamic factors
         exposure = self.get_exposure()
@@ -460,7 +460,7 @@ class LP:
         total_principal = self.buy_usdc + self.lp_usdc
         buy_ratio = (self.buy_usdc / total_principal * 100) if total_principal > 0 else D(0)
         lp_ratio = (self.lp_usdc / total_principal * 100) if total_principal > 0 else D(0)
-        print(f"{Color.CYAN}  │ USDC Split: buy={Color.YELLOW}{self.buy_usdc:.2f}{Color.END} ({buy_ratio:.1f}%), lp={Color.YELLOW}{self.lp_usdc:.2f}{Color.END} ({lp_ratio:.1f}%)")
+        print(f"{Color.CYAN}  │ USDC Split: {Color.END}buy={Color.YELLOW}{self.buy_usdc:.2f}{Color.END} ({buy_ratio:.1f}%), lp={Color.YELLOW}{self.lp_usdc:.2f}{Color.END} ({lp_ratio:.1f}%)")
         print(f"{Color.CYAN}  │ Buy USDC (w/yield): {Color.YELLOW}{buy_usdc_with_yield:.2f}{Color.END}")
 
         # Vault & compounding
@@ -469,7 +469,7 @@ class LP:
 
         # Price calculation breakdown
         if token_reserve > 0:
-            print(f"{Color.CYAN}  │ Price = usdc_reserve/token_reserve = {Color.YELLOW}{usdc_reserve:.2f}{Color.END}/{Color.YELLOW}{token_reserve:.2f}{Color.END} = {Color.GREEN}{self.price:.6f}{Color.END}")
+            print(f"{Color.CYAN}  │ Price: {Color.END}usdc_reserve/token_reserve = {Color.YELLOW}{usdc_reserve:.2f}{Color.END}/{Color.YELLOW}{token_reserve:.2f}{Color.END} = {Color.GREEN}{self.price:.6f}{Color.END}")
 
         # Minted vs Cap
         mint_pct = (self.minted / CAP * 100) if CAP > 0 else D(0)
@@ -566,7 +566,7 @@ def single_user_scenario(
     print(f"Final vault: {Color.YELLOW}{vault.balance_of()}{Color.END}")
     print(f"Final minted: {Color.YELLOW}{lp.minted}{Color.END}")
 
-def multi_user_scenario(
+def multi_user_spreaded_scenario(
     aaron_buy_usd: D = D(500),
     bob_buy_usd: D = D(400),
     carl_buy_usd: D = D(300),
@@ -582,7 +582,7 @@ def multi_user_scenario(
 
     # Scenario header
     print(f"\n{Color.BOLD}{Color.HEADER}{'='*70}{Color.END}")
-    print(f"{Color.BOLD}{Color.HEADER}{'  SCENARIO 2: MULTI-USER STAGGERED EXITS':^70}{Color.END}")
+    print(f"{Color.BOLD}{Color.HEADER}{'  SCENARIO 2: MULTI-USER SPREADED EXITS':^70}{Color.END}")
     print(f"{Color.BOLD}{Color.HEADER}{'='*70}{Color.END}\n")
 
     print(f"{Color.CYAN}[Initial]{Color.END} Aaron USDC: {Color.YELLOW}{aaron.balance_usd}{Color.END}")
@@ -782,7 +782,7 @@ def multi_user_scenario(
     print(f"Final vault balance: {Color.YELLOW}{vault.balance_of()}{Color.END}")
     print(f"Final minted tokens: {Color.YELLOW}{lp.minted}{Color.END}")
 
-def multi_user_full_cycle_scenario(
+def multi_user_bank_run_scenario(
     compound_days: int = 365,
 ):
     vault = Vault()
@@ -806,7 +806,7 @@ def multi_user_full_cycle_scenario(
 
     # Scenario header
     print(f"\n{Color.BOLD}{Color.HEADER}{'='*70}{Color.END}")
-    print(f"{Color.BOLD}{Color.HEADER}{'  SCENARIO 3: 10-USER FULL CYCLE (365 DAYS)':^70}{Color.END}")
+    print(f"{Color.BOLD}{Color.HEADER}{'  SCENARIO 3: 10-USER BANK RUN (365 DAYS)':^70}{Color.END}")
     print(f"{Color.BOLD}{Color.HEADER}{'='*70}{Color.END}\n")
 
     # print initial balances
@@ -898,5 +898,5 @@ def multi_user_full_cycle_scenario(
     print(f"Final price: {Color.GREEN}{lp.price}{Color.END}")
 
 single_user_scenario()
-multi_user_scenario()
-multi_user_full_cycle_scenario()
+multi_user_spreaded_scenario()
+multi_user_bank_run_scenario()
