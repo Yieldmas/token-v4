@@ -11,6 +11,9 @@ EXPOSURE_FACTOR = 100 * K
 # cap
 CAP = 1 * B
 
+# max USDC before virtual liquidity vanishes
+VIRTUAL_LIMIT = 100 * K
+
 class User:
     name: str
     balance_usd: D
@@ -124,10 +127,17 @@ class LP:
 
     @property
     def price(self) -> D:
-        """Current token price: price = buy_usdc_with_yield / minted_tokens
+        """Current token price calculated from bonding curve reserves.
+        When tokens exist: price = buy_usdc_with_yield / minted
+        When no tokens: price = usdc_reserve / token_reserve (marginal price)
         Only buy USDC affects price, not LP USDC."""
         if self.minted == 0:
-            return D(1)  # default price before any mints
+            # Calculate marginal price from bonding curve
+            token_reserve = self._get_token_reserve()
+            usdc_reserve = self._get_usdc_reserve()
+            if token_reserve == 0:
+                return D(1)  # fallback if no reserves
+            return usdc_reserve / token_reserve
         return self.get_buy_usdc_with_yield() / self.minted
 
     def get_exposure(self) -> D:
@@ -140,14 +150,24 @@ class LP:
         exposure = EXPOSURE_FACTOR * (D(1) - effective / CAP)
         return max(D(0), exposure)
 
+    def get_virtual_liquidity(self) -> D:
+        """
+        Dynamic virtual liquidity that decreases as more USDC is added.
+        Reaches 0 at 100K USDC.
+        """
+        base = CAP / EXPOSURE_FACTOR  # 10,000
+        effective = min(self.buy_usdc, VIRTUAL_LIMIT)
+        liquidity = base * (D(1) - effective / VIRTUAL_LIMIT)
+        return max(D(0), liquidity)
+
     def _get_token_reserve(self) -> D:
         """Virtual token reserve = (CAP - minted) / exposure"""
         exposure = self.get_exposure()
         return (CAP - self.minted) / exposure if exposure > 0 else CAP - self.minted
 
     def _get_usdc_reserve(self) -> D:
-        """Virtual USDC reserve = buy_usdc + virtual_liquidity"""
-        return self.buy_usdc + self.virtual_liquidity
+        """Virtual USDC reserve = buy_usdc + dynamic virtual_liquidity"""
+        return self.buy_usdc + self.get_virtual_liquidity()
 
     def _update_k(self):
         """
@@ -165,8 +185,8 @@ class LP:
         Only buy_usdc affects bonding curve.
         """
         if self.k is None:
-            # First buy: initialize k with virtual liquidity
-            self.k = self._get_token_reserve() * self.virtual_liquidity
+            # First buy: initialize k with dynamic virtual liquidity
+            self.k = self._get_token_reserve() * self.get_virtual_liquidity()
 
         token_reserve = self._get_token_reserve()
         usdc_reserve = self._get_usdc_reserve()
