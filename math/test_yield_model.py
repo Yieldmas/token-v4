@@ -84,6 +84,7 @@ class LP:
     minted: D
     liquidity_token: Dict[str, D]
     liquidity_usd: Dict[str, D]
+    user_buy_usdc: Dict[str, D]
     user_snapshot: Dict[str, UserSnapshot]
     vault: Vault
     k: Optional[D]
@@ -97,6 +98,7 @@ class LP:
         self.minted = D(0)
         self.liquidity_token = {}
         self.liquidity_usd = {}
+        self.user_buy_usdc = {}
         self.user_snapshot = {}
         self.vault = vault
         self.k = None
@@ -225,36 +227,48 @@ class LP:
         # get user's deposited amounts
         token_deposit = self.liquidity_token[user.name]
         usd_deposit = self.liquidity_usd[user.name]
+        buy_usdc_principal = self.user_buy_usdc.get(user.name, D(0))
 
         # calculate yield based on compounding
         delta = self.vault.compounding_index / self.user_snapshot[user.name].index
 
+        # LP USDC yield (5% APY)
         usd_yield = usd_deposit * (delta - D(1))
         usd_amount = usd_deposit + usd_yield
 
+        # LP token inflation (5% APY)
         token_yield = token_deposit * (delta - D(1))
         token_amount = token_deposit + token_yield
+
+        # Buy USDC yield (5% APY)
+        buy_usdc_yield = buy_usdc_principal * (delta - D(1))
+        total_usdc = usd_amount + buy_usdc_yield
 
         # mint inflation yield on tokens
         self.mint(token_yield)
 
-        # remove user usdc deposit & rewards from vault
-        self.dehypo(usd_amount)
+        # remove LP USDC + buy USDC yield from vault
+        self.dehypo(total_usdc)
 
         # reduce lp_usdc by the original LP principal
         self.lp_usdc -= usd_deposit
 
+        # reduce buy_usdc by the yield (principal stays for bonding curve)
+        self.buy_usdc -= buy_usdc_yield
+
         # remove funds from lp
         self.balance_token -= token_amount
-        self.balance_usd -= usd_amount
+        self.balance_usd -= total_usdc
 
         # send funds to user
         user.balance_token += token_amount
-        user.balance_usd += usd_amount
+        user.balance_usd += total_usdc
 
         # clear user liquidity
         del self.liquidity_token[user.name]
         del self.liquidity_usd[user.name]
+        if user.name in self.user_buy_usdc:
+            del self.user_buy_usdc[user.name]
 
     def buy(self, user: User, amount: D):
         # take usd
@@ -273,6 +287,9 @@ class LP:
 
         # track buy USDC (affects bonding curve)
         self.buy_usdc += amount
+
+        # track USDC used to buy tokens
+        self.user_buy_usdc[user.name] = self.user_buy_usdc.get(user.name, D(0)) + amount
 
         # rehypo (deposits all USDC to vault)
         self.rehypo()
