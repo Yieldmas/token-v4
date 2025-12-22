@@ -82,7 +82,8 @@ class LP:
     balance_usd: D
     balance_token: D
     minted: D
-    liquidity: Dict[str, D]
+    liquidity_token: Dict[str, D]
+    liquidity_usd: Dict[str, D]
     user_snapshot: Dict[str, UserSnapshot]
     vault: Vault
     k: Optional[D]
@@ -94,7 +95,8 @@ class LP:
         self.balance_usd = D(0)
         self.balance_token = D(0)
         self.minted = D(0)
-        self.liquidity = {}
+        self.liquidity_token = {}
+        self.liquidity_usd = {}
         self.user_snapshot = {}
         self.vault = vault
         self.k = None
@@ -216,21 +218,20 @@ class LP:
         )
 
         # compute liquidity
-        user_liquidity = self.liquidity.get(user.name)
-        if user_liquidity is None:
-            self.liquidity[user.name] = token_amount + usd_amount
-        else:
-            self.liquidity[user.name] += token_amount + usd_amount
+        self.liquidity_token[user.name] = self.liquidity_token.get(user.name, D(0)) + token_amount
+        self.liquidity_usd[user.name] = self.liquidity_usd.get(user.name, D(0)) + usd_amount
 
-    def remove_liquidity(self, user: User, liquidity_amount: D):
-        # translate liquidity to token & usdc
+    def remove_liquidity(self, user: User):
+        # get user's deposited amounts
+        token_deposit = self.liquidity_token[user.name]
+        usd_deposit = self.liquidity_usd[user.name]
+
+        # calculate yield based on compounding
         delta = self.vault.compounding_index / self.user_snapshot[user.name].index
 
-        usd_deposit = liquidity_amount / 2
-        usd_yield = usd_deposit * (delta - D(1)) * 2
+        usd_yield = usd_deposit * (delta - D(1))
         usd_amount = usd_deposit + usd_yield
 
-        token_deposit = liquidity_amount / 2
         token_yield = token_deposit * (delta - D(1))
         token_amount = token_deposit + token_yield
 
@@ -251,8 +252,9 @@ class LP:
         user.balance_token += token_amount
         user.balance_usd += usd_amount
 
-        # update liquidity
-        self.liquidity[user.name] -= liquidity_amount
+        # clear user liquidity
+        del self.liquidity_token[user.name]
+        del self.liquidity_usd[user.name]
 
     def buy(self, user: User, amount: D):
         # take usd
@@ -316,8 +318,6 @@ class LP:
 def single_user_scenario(
     user_initial_usd: D = 1 * K,
     user_buy_token_usd: D = D(500),
-    user_add_liquidity_token: D = D(500),
-    user_add_liquidity_usd: D = D(500),
     compound_days: int = 100,
 ):
     vault = Vault()
@@ -338,7 +338,9 @@ def single_user_scenario(
     print(f"[Buy] Token price: {lp.price}")
     print(f"[Buy] Pool invariant k: {lp.k}")
 
-    # add liquidity
+    # add liquidity symmetrically: match token value at current price
+    user_add_liquidity_token = user.balance_token
+    user_add_liquidity_usd = user_add_liquidity_token * lp.price
     lp.add_liquidity(user, user_add_liquidity_token, user_add_liquidity_usd)
     assert lp.balance_token == user_add_liquidity_token
     assert lp.balance_usd == D(0)
@@ -346,8 +348,10 @@ def single_user_scenario(
     assert vault.balance_of() == user_add_liquidity_usd + user_buy_token_usd
     print(f"[Liquidity add] User USDC: {user_add_liquidity_usd}")
     print(f"[Liquidity add] User tokens: {user_add_liquidity_token}")
-    print(f"[Liquidity add] User liquidity: {lp.liquidity[user.name]}")
+    print(f"[Liquidity add] User liquidity tokens: {lp.liquidity_token[user.name]}")
+    print(f"[Liquidity add] User liquidity USDC: {lp.liquidity_usd[user.name]}")
 
+    # snapshot price after adding liquidity
     price_after_add_liquidity = lp.price
     print(f"[Liquidity add] Token price: {lp.price}")
     print(f"[Liquidity add] Pool invariant k: {lp.k}")
@@ -356,13 +360,13 @@ def single_user_scenario(
     vault.compound(compound_days)
     print(f"[{compound_days} days] Vault balance: {vault.balance_of()}")
 
-    # Price changes as vault balance grows (more USDC per token)
+    # price changes as vault balance grows (more USDC per token)
     assert lp.price > price_after_add_liquidity, f"Price should increase as vault compounds, got {lp.price} vs {price_after_add_liquidity}"
     print(f"[After compound] Token price: {lp.price}")
     print(f"[After compound] Pool invariant k: {lp.k}")
 
     # remove liquidity
-    lp.remove_liquidity(user, lp.liquidity[user.name])
+    lp.remove_liquidity(user)
     print(f"[Liquidity removal] User USDC: {user.balance_usd}")
     print(f"[Liquidity removal] User tokens: {user.balance_token}")
     print(f"[Liquidity removal] LP tokens: {lp.balance_token}")
