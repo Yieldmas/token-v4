@@ -127,18 +127,15 @@ class LP:
 
     @property
     def price(self) -> D:
-        """Current token price calculated from bonding curve reserves.
-        When tokens exist: price = buy_usdc_with_yield / minted
-        When no tokens: price = usdc_reserve / token_reserve (marginal price)
+        """Current token price calculated from bonding curve marginal price.
+        price = usdc_reserve / token_reserve
+        This is the instantaneous price for the next token based on x*y=k curve.
         Only buy USDC affects price, not LP USDC."""
-        if self.minted == 0:
-            # Calculate marginal price from bonding curve
-            token_reserve = self._get_token_reserve()
-            usdc_reserve = self._get_usdc_reserve()
-            if token_reserve == 0:
-                return D(1)  # fallback if no reserves
-            return usdc_reserve / token_reserve
-        return self.get_buy_usdc_with_yield() / self.minted
+        token_reserve = self._get_token_reserve()
+        usdc_reserve = self._get_usdc_reserve()
+        if token_reserve == 0:
+            return D(1)  # fallback if no reserves
+        return usdc_reserve / token_reserve
 
     def get_exposure(self) -> D:
         """
@@ -166,8 +163,9 @@ class LP:
         return (CAP - self.minted) / exposure if exposure > 0 else CAP - self.minted
 
     def _get_usdc_reserve(self) -> D:
-        """Virtual USDC reserve = buy_usdc + dynamic virtual_liquidity"""
-        return self.buy_usdc + self.get_virtual_liquidity()
+        """Virtual USDC reserve = buy_usdc_with_yield + dynamic virtual_liquidity
+        Includes compounded yield so price increases as vault compounds."""
+        return self.get_buy_usdc_with_yield() + self.get_virtual_liquidity()
 
     def _update_k(self):
         """
@@ -298,8 +296,8 @@ class LP:
         # compute out amount (token) using x*y=k
         out_amount = self._get_out_amount(amount, selling_token=False)
 
-        # mint as much token as needed
-        self.mint(max(D(0), out_amount - self.balance_token))
+        # always mint new tokens for buy operations (don't use LP tokens)
+        self.mint(out_amount)
 
         # give token
         self.balance_token -= out_amount
@@ -428,4 +426,144 @@ def single_user_scenario(
     print(f"[Sell] Token price: {lp.price}")
     print(f"[Sell] Pool invariant k: {lp.k}")
 
+def multi_user_scenario(
+    aaron_buy_usd: D = D(500),
+    bob_buy_usd: D = D(400),
+    carl_buy_usd: D = D(300),
+    dennis_buy_usd: D = D(600),
+    compound_interval: int = 50,
+):
+    vault = Vault()
+    lp = LP(vault)
+    aaron = User("aaron", 2 * K)
+    bob = User("bob", 2 * K)
+    carl = User("carl", 2 * K)
+    dennis = User("dennis", 2 * K)
+    print(f"\n=== MULTI-USER SCENARIO ===")
+    
+    print(f"[Initial] Aaron USDC: {aaron.balance_usd}")
+    print(f"[Initial] Bob USDC: {bob.balance_usd}")
+    print(f"[Initial] Carl USDC: {carl.balance_usd}")
+    print(f"[Initial] Dennis USDC: {dennis.balance_usd}")
+
+    # aaron buys tokens for 500 usd
+    lp.buy(aaron, aaron_buy_usd)
+    assert vault.balance_of() == aaron_buy_usd
+    print(f"[Aaron Buy] Aaron tokens: {aaron.balance_token}")
+    print(f"[Aaron Buy] Token price: {lp.price}")
+    print(f"[Aaron Buy] Vault balance: {vault.balance_of()}")
+
+    # aaron adds liquidity symmetrically
+    aaron_add_liquidity_token = aaron.balance_token
+    aaron_add_liquidity_usd = aaron_add_liquidity_token * lp.price
+    lp.add_liquidity(aaron, aaron_add_liquidity_token, aaron_add_liquidity_usd)
+    assert lp.liquidity_token[aaron.name] == aaron_add_liquidity_token
+    print(f"[Aaron LP] Aaron liquidity tokens: {lp.liquidity_token[aaron.name]}")
+    print(f"[Aaron LP] Aaron liquidity USDC: {lp.liquidity_usd[aaron.name]}")
+    print(f"[Aaron LP] Vault balance: {vault.balance_of()}")
+
+    # bob buys tokens for 400 usd
+    lp.buy(bob, bob_buy_usd)
+    print(f"[Bob Buy] Bob tokens: {bob.balance_token}")
+    print(f"[Bob Buy] Token price: {lp.price}")
+    print(f"[Bob Buy] Vault balance: {vault.balance_of()}")
+
+    # bob adds liquidity symmetrically
+    bob_add_liquidity_token = bob.balance_token
+    bob_add_liquidity_usd = bob_add_liquidity_token * lp.price
+    lp.add_liquidity(bob, bob_add_liquidity_token, bob_add_liquidity_usd)
+    assert lp.liquidity_token[bob.name] == bob_add_liquidity_token
+    print(f"[Bob LP] Bob liquidity tokens: {lp.liquidity_token[bob.name]}")
+    print(f"[Bob LP] Bob liquidity USDC: {lp.liquidity_usd[bob.name]}")
+    print(f"[Bob LP] Vault balance: {vault.balance_of()}")
+
+    # carl buys tokens for 300 usd
+    lp.buy(carl, carl_buy_usd)
+    print(f"[Carl Buy] Carl tokens: {carl.balance_token}")
+    print(f"[Carl Buy] Token price: {lp.price}")
+    print(f"[Carl Buy] Vault balance: {vault.balance_of()}")
+
+    # carl adds liquidity symmetrically
+    carl_add_liquidity_token = carl.balance_token
+    carl_add_liquidity_usd = carl_add_liquidity_token * lp.price
+    lp.add_liquidity(carl, carl_add_liquidity_token, carl_add_liquidity_usd)
+    assert lp.liquidity_token[carl.name] == carl_add_liquidity_token
+    print(f"[Carl LP] Carl liquidity tokens: {lp.liquidity_token[carl.name]}")
+    print(f"[Carl LP] Carl liquidity USDC: {lp.liquidity_usd[carl.name]}")
+    print(f"[Carl LP] Vault balance: {vault.balance_of()}")
+
+    # dennis buys tokens for 600 usd
+    lp.buy(dennis, dennis_buy_usd)
+    print(f"[Dennis Buy] Dennis tokens: {dennis.balance_token}")
+    print(f"[Dennis Buy] Token price: {lp.price}")
+    print(f"[Dennis Buy] Vault balance: {vault.balance_of()}")
+
+    # dennis adds liquidity symmetrically
+    dennis_add_liquidity_token = dennis.balance_token
+    dennis_add_liquidity_usd = dennis_add_liquidity_token * lp.price
+    lp.add_liquidity(dennis, dennis_add_liquidity_token, dennis_add_liquidity_usd)
+    assert lp.liquidity_token[dennis.name] == dennis_add_liquidity_token
+    print(f"[Dennis LP] Dennis liquidity tokens: {lp.liquidity_token[dennis.name]}")
+    print(f"[Dennis LP] Dennis liquidity USDC: {lp.liquidity_usd[dennis.name]}")
+    print(f"[Dennis LP] Vault balance: {vault.balance_of()}")
+    print(f"[Dennis LP] Pool tokens: {lp.balance_token}")
+    print(f"[Dennis LP] Minted tokens: {lp.minted}")
+
+    # compound for 50 days
+    vault.compound(compound_interval)
+    print(f"[{compound_interval} days] Vault balance: {vault.balance_of()}")
+    print(f"[{compound_interval} days] Token price: {lp.price}")
+
+    # aaron removes liquidity (staked 50 days)
+    aaron_usdc_before = aaron.balance_usd
+    lp.remove_liquidity(aaron)
+    print(f"[Aaron removal] Aaron USDC: {aaron.balance_usd}")
+    print(f"[Aaron removal] Aaron USDC gain: {aaron.balance_usd - aaron_usdc_before}")
+    print(f"[Aaron removal] Aaron tokens: {aaron.balance_token}")
+    print(f"[Aaron removal] Vault balance: {vault.balance_of()}")
+    print(f"[Aaron removal] Token price: {lp.price}")
+
+    # compound for another 50 days
+    vault.compound(compound_interval)
+    print(f"[{compound_interval*2} days] Vault balance: {vault.balance_of()}")
+    print(f"[{compound_interval*2} days] Token price: {lp.price}")
+
+    # bob removes liquidity (staked 100 days)
+    bob_usdc_before = bob.balance_usd
+    lp.remove_liquidity(bob)
+    print(f"[Bob removal] Bob USDC: {bob.balance_usd}")
+    print(f"[Bob removal] Bob USDC gain: {bob.balance_usd - bob_usdc_before}")
+    print(f"[Bob removal] Bob tokens: {bob.balance_token}")
+    print(f"[Bob removal] Vault balance: {vault.balance_of()}")
+    print(f"[Bob removal] Token price: {lp.price}")
+
+    # compound for another 50 days
+    vault.compound(compound_interval)
+    print(f"[{compound_interval*3} days] Vault balance: {vault.balance_of()}")
+    print(f"[{compound_interval*3} days] Token price: {lp.price}")
+
+    # carl removes liquidity (staked 150 days)
+    carl_usdc_before = carl.balance_usd
+    lp.remove_liquidity(carl)
+    print(f"[Carl removal] Carl USDC: {carl.balance_usd}")
+    print(f"[Carl removal] Carl USDC gain: {carl.balance_usd - carl_usdc_before}")
+    print(f"[Carl removal] Carl tokens: {carl.balance_token}")
+    print(f"[Carl removal] Vault balance: {vault.balance_of()}")
+    print(f"[Carl removal] Token price: {lp.price}")
+
+    # compound for another 50 days
+    vault.compound(compound_interval)
+    print(f"[{compound_interval*4} days] Vault balance: {vault.balance_of()}")
+    print(f"[{compound_interval*4} days] Token price: {lp.price}")
+
+    # dennis removes liquidity (staked 200 days - longest)
+    dennis_usdc_before = dennis.balance_usd
+    lp.remove_liquidity(dennis)
+    print(f"[Dennis removal] Dennis USDC: {dennis.balance_usd}")
+    print(f"[Dennis removal] Dennis USDC gain: {dennis.balance_usd - dennis_usdc_before}")
+    print(f"[Dennis removal] Dennis tokens: {dennis.balance_token}")
+    print(f"[Dennis removal] Vault balance: {vault.balance_of()}")
+    print(f"[Dennis removal] Token price: {lp.price}")
+
 single_user_scenario()
+multi_user_scenario()
