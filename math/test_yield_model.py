@@ -307,20 +307,22 @@ class LP:
     def sell(self, user: User, amount: D):
         # take token
         user.balance_token -= amount
-        self.balance_token += amount
 
-        # compute amount in (usd) using x*y=k
-        in_amount = self._get_out_amount(amount, selling_token=True)
+        # burn tokens
+        self.minted -= amount
+
+        # compute amount out (usd) using x*y=k
+        out_amount = self._get_out_amount(amount, selling_token=True)
 
         # update buy_usdc (reduces bonding curve reserve)
-        self.buy_usdc -= in_amount
+        self.buy_usdc -= out_amount
 
         # dehypo
-        self.dehypo(in_amount)
+        self.dehypo(out_amount)
 
         # give usd
-        self.balance_usd -= in_amount
-        user.balance_usd += in_amount
+        self.balance_usd -= out_amount
+        user.balance_usd += out_amount
 
         # update invariant after swap
         self._update_k()
@@ -392,5 +394,18 @@ def single_user_scenario(
     print(f"[Liquidity removal] Vault USDC: {vault.balance_usd}")
     print(f"[Liquidity removal] Token price: {lp.price}")
     print(f"[Liquidity removal] Pool invariant k: {lp.k}")
+
+    # sell all tokens
+    user_tokens = user.balance_token
+    lp.sell(user, user_tokens)
+    print(f"[Sell] User sold tokens: {user_tokens}")
+    print(f"[Sell] User USDC: {user.balance_usd}")
+    print(f"[Sell] User tokens: {user.balance_token}")
+    print(f"[Sell] LP tokens: {lp.balance_token}")
+    print(f"[Sell] LP USDC: {lp.balance_usd}")
+    print(f"[Sell] Vault balance of: {vault.balance_of()}")
+    print(f"[Sell] Vault USDC: {vault.balance_usd}")
+    print(f"[Sell] Token price: {lp.price}")
+    print(f"[Sell] Pool invariant k: {lp.k}")
 
 single_user_scenario()
