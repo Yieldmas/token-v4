@@ -18,7 +18,7 @@ Users can buy tokens, provide liquidity, earn yield, and exit at any time.
 
 Users buy tokens with USDC using a bonding curve:
 
-```
+```python
 (token_reserve - token_out) * (usdc_reserve + usdc_in) = k
 ```
 
@@ -66,7 +66,7 @@ Users provide tokens + USDC to become liquidity providers (LPs):
 
 Vault earns 5% APY (compounded daily):
 
-```
+```python
 vault_balance = principal * (1 + apy/365) ^ days
 ```
 
@@ -98,7 +98,7 @@ LPs can remove their liquidity position:
 - User receives USDC + inflated tokens
 
 **Fair share scaling:**
-```
+```python
 scaling_factor = min(1, fair_share / requested, vault_available / requested)
 ```
 
@@ -124,7 +124,7 @@ Users can sell tokens back to the pool:
 - Pool burns tokens (reduces `minted`)
 - Pool calculates USDC out using bonding curve:
 
-```
+```python
 (token_reserve + token_in) * (usdc_reserve - usdc_out) = k
 ```
 
@@ -134,7 +134,7 @@ Users can sell tokens back to the pool:
 - Price decreases (fewer tokens, less USDC)
 
 **Fair share cap:**
-```
+```python
 user_fraction = tokens_sold / total_minted
 max_usdc = user_fraction * vault.balance_of()
 ```
